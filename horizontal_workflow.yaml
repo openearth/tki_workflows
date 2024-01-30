@@ -1,0 +1,182 @@
+# This workflow is a tutorial workflow including running delft3D fm model en postprocessing it. 
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: cloud-tutorial-workflow-
+spec:
+  entrypoint: scenario-workflow
+  templates:
+  - name: only-running
+    steps:
+    - - name: delft3dfm
+        template: delft3dfm
+
+  - name: define-subdirs
+    steps:
+    - - name: define-subdirs
+        template: read-members
+
+  - name: scenario-workflow
+    steps:
+    - - name: define-subdirs
+        template: read-members 
+    - - name: run-scenario
+        template: run-scenario
+        arguments:
+          parameters:
+          - name: member
+            value: "{{item}}"
+        withParam: "{{steps.define-subdirs.outputs.result}}"
+
+
+  - name: read-members
+    script:
+      image: 093939400611.dkr.ecr.eu-west-1.amazonaws.com/boto3
+      workingDir: /data
+      command: [python]
+      source: |
+        import boto3
+        import json
+
+        bucket = 'tki5-deltares'
+        prefix = 'buien_test/'
+        
+        client = boto3.client('s3')
+        result = client.list_objects(Bucket=bucket, Prefix=prefix, Delimiter='/')
+        
+        members = []
+        for o in result.get('CommonPrefixes'):
+            members.append(o.get('Prefix').split('/')[1])
+        print(json.dumps(members))
+
+  - name: run-scenario
+    inputs:
+      parameters:
+        - name: member
+      artifacts:
+      - name: my-art
+        path: /my-artifact
+        s3:
+          # Use the corresponding endpoint depending on your S3 provider:
+          #   AWS: s3.amazonaws.com
+          #   GCS: storage.googleapis.com
+          #   Minio: my-minio-endpoint.default:9000
+          endpoint: s3.amazonaws.com
+          bucket: tki5-deltares
+          key: models/DIMR10bij10naar5_test.tar.gz
+          # Specify the bucket region. Note that if you want Argo to figure out this automatically,
+          # you can set additional statement policy that allows `s3:GetBucketLocation` action.
+          # For details, check out: https://argoproj.github.io/argo-workflows/configure-artifact-repository/#configuring-aws-s3
+          region: eu-west-1
+          # accessKeySecret and secretKeySecret are secret selectors.
+          # It references the k8s secret named 'my-s3-credentials'.
+          # This secret is expected to have have the keys 'accessKey'
+          # and 'secretKey', containing the base64 encoded credentials
+          # to the bucket.
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          tar: {}
+      - name: bui
+        path: "/my-artifact/rr/default.bui"
+        s3:
+          endpoint: s3.amazonaws.com
+          bucket: tki5-deltares
+          key: "buien_test/{{inputs.parameters.member}}/DEFAULT.BUI"
+          region: eu-west-1
+          # accessKeySecret and secretKeySecret are secret selectors.
+          # It references the k8s secret named 'my-s3-credentials'.
+          # This secret is expected to have have the keys 'accessKey'
+          # and 'secretKey', containing the base64 encoded credentials
+          # to the bucket.
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          none: {}
+    outputs:
+      artifacts:
+      - name: model-output
+        s3:
+          bucket: tki5-deltares
+          endpoint: s3.amazonaws.com
+          region: eu-west-1
+          key: "models-output/DIMR10bij10naar5_test_{{inputs.parameters.member}}.tar.gz"
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          tar: {}
+      # generate hello-art artifact from /tmp/hello_world.txt
+      # artifacts can be directories as well as files
+        path: /my-artifact
+    container:
+      image: 093939400611.dkr.ecr.eu-west-1.amazonaws.com/dhydro_1d2d
+      command: ["bash"]
+      args: ["-c","cd /my-artifact/ && ./run_docker.sh"]
+      #command: [sh, -c]
+      #args: ["ls -l /my-artifact"]
+
+
+  - name: delft3dfm
+    inputs:
+      artifacts:
+      - name: my-art
+        path: /my-artifact
+        s3:
+          # Use the corresponding endpoint depending on your S3 provider:
+          #   AWS: s3.amazonaws.com
+          #   GCS: storage.googleapis.com
+          #   Minio: my-minio-endpoint.default:9000
+          endpoint: s3.amazonaws.com
+          bucket: tki5-deltares
+          key: models/file.tar.gz
+          # Specify the bucket region. Note that if you want Argo to figure out this automatically,
+          # you can set additional statement policy that allows `s3:GetBucketLocation` action.
+          # For details, check out: https://argoproj.github.io/argo-workflows/configure-artifact-repository/#configuring-aws-s3
+          region: eu-west-1
+          # accessKeySecret and secretKeySecret are secret selectors.
+          # It references the k8s secret named 'my-s3-credentials'.
+          # This secret is expected to have have the keys 'accessKey'
+          # and 'secretKey', containing the base64 encoded credentials
+          # to the bucket.
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          tar: {}
+    outputs:
+      artifacts:
+      - name: model-output
+        s3:
+          bucket: tki5-deltares
+          endpoint: s3.amazonaws.com
+          region: eu-west-1
+          key: models/file-output.tar.gz
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          tar: {}
+        path: /my-artifact
+    container:
+      image: 093939400611.dkr.ecr.eu-west-1.amazonaws.com/dhydro_1d2d
+      command: ["bash"]
+      args: ["-c","cd /my-artifact/ && ./run_docker.sh"]
+      

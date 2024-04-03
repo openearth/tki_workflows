@@ -1,0 +1,95 @@
+# This workflow is a tutorial workflow including running delft3D fm model en postprocessing it. 
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: cloud-tutorial-workflow-
+spec:
+  entrypoint: scenario-workflow
+  templates:
+  - name: only-running
+    steps:
+    - - name: delft3dfm
+        template: delft3dfm
+
+  - name: define-subdirs
+    steps:
+    - - name: define-subdirs
+        template: read-members
+
+  - name: scenario-workflow
+    steps:
+    - - name: run-scenario
+        template: run-scenario
+
+  - name: run-scenario
+    inputs:
+      artifacts:
+      - name: data
+        path: /data
+        s3:
+          # Use the corresponding endpoint depending on your S3 provider:
+          #   AWS: s3.amazonaws.com
+          #   GCS: storage.googleapis.com
+          #   Minio: my-minio-endpoint.default:9000
+          endpoint: s3.amazonaws.com
+          bucket: tki5-deltares
+          key: models/DR49_12_5bij12_5_linux_37partities_cloud
+          #key: models/DR49_25bij25_linux_9partities_cloud
+          # Specify the bucket region. Note that if you want Argo to figure out this automatically,
+          # you can set additional statement policy that allows `s3:GetBucketLocation` action.
+          # For details, check out: https://argoproj.github.io/argo-workflows/configure-artifact-repository/#configuring-aws-s3
+          region: eu-west-1
+          # accessKeySecret and secretKeySecret are secret selectors.
+          # It references the k8s secret named 'my-s3-credentials'.
+          # This secret is expected to have have the keys 'accessKey'
+          # and 'secretKey', containing the base64 encoded credentials
+          # to the bucket.
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          none: {}
+    outputs:
+      artifacts:
+      - name: model-output
+        s3:
+          bucket: tki5-deltares
+          endpoint: s3.amazonaws.com
+          region: eu-west-1
+          key: "models-output/DR49_12_5bij12_5_linux_37partities_cloud.tar.gz"
+          accessKeySecret:
+            name: my-s3-credentials
+            key: accessKey
+          secretKeySecret:
+            name: my-s3-credentials
+            key: secretKey
+        archive:
+          tar: {}
+        path: /data
+    container:
+      image: 093939400611.dkr.ecr.eu-west-1.amazonaws.com/delft3dfm:latest
+      resources:
+        requests:
+          cpu: 80
+          memory: "80Gi"
+        limits:
+          cpu: 80
+          memory: "80Gi"
+      securityContext:
+        privileged: true
+      command: ["sh", "-c", "ulimit -s unlimited && cd /data/ && sh run_docker.sh"]
+      # This substitutes the standard shm size of 256Mb. This is needed for runs with higher
+      # number of partitions.
+      volumeMounts:
+        - mountPath: /dev/shm
+          name: cache-volume
+    volumes:
+    - emptyDir:
+        medium: Memory
+        sizeLimit: 2Gi
+      name: cache-volume
+    nodeSelector:
+      eks.amazonaws.com/nodegroup: c7i24xlarge
